@@ -36,11 +36,19 @@ const parseXLSX = (filePath) => {
   return jsonData;
 };
 
+// After processing the upload
+app.post('/uploads', upload.single('file'), (req, res) => {
+  const filePath = req.file.path;
+  const documentContent = parseXLSX(filePath);  // Parsed data from the uploaded file
+
+  // Store documentContent in the response
+  res.json({ documentContent });
+});
+
+
 // Function to query the Gemini API
 const queryGeminiAPI = async (question, documentContent) => {
-
-  console.log(documentContent," documentContent");
-  const apiKey = process.env.GEMINI_API_KEY || GEMINI_API_KEY; // Use API key from environment variable or fallback
+  const apiKey = process.env.GEMINI_API_KEY || GEMINI_API_KEY;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
   const payload = {
@@ -48,10 +56,10 @@ const queryGeminiAPI = async (question, documentContent) => {
       {
         parts: [
           {
-            text: question, // Pass the question here
+            text: question,
           },
           {
-            text: JSON.stringify(documentContent), // Pass the XLSX content as text (stringified JSON)
+            text: JSON.stringify(documentContent),  // Include the document content as context
           },
         ],
       },
@@ -64,69 +72,20 @@ const queryGeminiAPI = async (question, documentContent) => {
         'Content-Type': 'application/json',
       },
     });
-    console.log('Response from Gemini API:', response.data);
- 
-    return response.data; // Return the API response
+
+    const responseText = response.data?.generatedText || "";
+
+    // Extract just the answer part from the response
+    const answerMatch = responseText.match(/(?:Answer:|Answer|Response:)(.*?)(?=\n|$)/s);
+    return answerMatch ? answerMatch[1].trim() : "No clear answer found.";
+
   } catch (error) {
     console.error('Error querying Gemini API:', error.response?.data || error.message);
     throw new Error('Failed to query Gemini API');
   }
 };
 
-// Endpoint to handle file upload and parsing
-app.post('/uploads', upload.single('file'), (req, res) => {
-  console.log(req.file ,"  filew")
-  if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded.' });
-  }
-  res.status(200).json({ message: 'File uploaded successfully.' });
-});
 
-// Endpoint to handle question
-app.post('/ask', async (req, res) => {
-  const { question } = req.body;
-
-  if (!question) {
-    return res.status(400).json({ error: 'Question is required.' });
-  }
-
-  try {
-    const folderPath = path.join(__dirname, 'uploads');
-    const files = fs.readdirSync(folderPath); // Read all files in the uploads folder
-    let answers = [];
-
-    // Loop through all files in the uploads folder
-    for (const file of files) {
-      const filePath = path.join(folderPath, file);
-      const fileExtension = path.extname(file).toLowerCase();
-
-      if (fileExtension == '.xlsx') {
-        const documentContent = parseXLSX(filePath); // Parse the XLSX file
-
-        // Log the parsed content (for debugging purposes)
-        console.log(`Document content for ${file}:`, documentContent);
-
-        // Convert the document content to text format (stringify JSON)
-        const contentText = JSON.stringify(documentContent);
-        console.log(contentText, "contentText")
-
-        // Query Gemini API with the document content
-        const answer = await queryGeminiAPI(question, contentText);
-        answers.push({ file, answer });
-      }
-    }
-
-    // Send response with answers from all files
-    if (answers.length > 0) {
-      res.status(200).json({ answers });
-    } else {
-      res.status(404).json({ error: 'No valid .xlsx files found in the uploads folder.' });
-    }
-  } catch (error) {
-    console.error('Error processing question:', error.message);
-    res.status(500).json({ error: 'Failed to process the question.' });
-  }
-});
 
 // Start the server
 app.listen(port, () => {
